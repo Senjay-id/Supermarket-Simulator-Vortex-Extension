@@ -8,11 +8,12 @@ const BEPINEX_RELPATH = 'bepinex';
 const BEPINEX_PATCHERS_RELPATH = path.join(BEPINEX_RELPATH, 'patchers');
 const BEPINEX_PLUGINS_RELPATH = path.join(BEPINEX_RELPATH, 'plugins');
 const BEPINEX_CONFIG_RELPATH = path.join(BEPINEX_RELPATH, 'config');
-const TEXTUREREPLACER_RELPATH = path.join(BEPINEX_RELPATH, 'plugins', 'texturereplacer');
-const MELONLOADER_RELPATH = 'MLLoader';
+const MELONLOADER_RELPATH = 'mlloader';
 const MELONLOADER_PLUGINS_RELPATH = path.join(MELONLOADER_RELPATH, 'plugins');
 const MELONLOADER_MODS_RELPATH = path.join(MELONLOADER_RELPATH, 'mods');
 const MELONLOADER_CONFIG_RELPATH = path.join(MELONLOADER_RELPATH, 'userdata');
+const TEXTUREREPLACER_RELPATH = path.join(BEPINEX_RELPATH, 'plugins', 'texturereplacer');
+const MOREPRODUCTS_RELPATH = path.join(BEPINEX_RELPATH, 'plugins', 'moreproducts');
 
 function main(context) {
     context.registerGame({
@@ -36,8 +37,9 @@ function main(context) {
         },
     });
 
-    //Test for plugin mods before texturereplacer mods
-    context.registerInstaller('supermarketsimulator-bepinmelonmod', 20, testSupportedPluginContent, installPluginMods(context.api));
+    //Test for plugin mods then moreproducts mods then texturereplacer mods.
+    context.registerInstaller('supermarketsimulator-bepinmelonmod', 15, testSupportedPluginContent, installPluginMods(context.api));
+    context.registerInstaller('supermarketsimulator-moreproductsmod', 20, testSupportedMoreProductsContent, installMoreProductsMods(context.api));
     context.registerInstaller('supermarketsimulator-texturereplacermod', 25, testSupportedTextureReplacerContent, installTextureReplacerMods(context.api));
 
     return true;
@@ -168,6 +170,8 @@ function installPluginMods(api) {
                 if (isMelonLoader) {
                     otherRelPath = path.join(MELONLOADER_MODS_RELPATH, otherSegments.slice(1).join(path.sep));
                 }
+                else if (isBepInEx)
+                    otherRelPath = path.join(BEPINEX_PLUGINS_RELPATH, otherSegments.slice(1).join(path.sep));
 
                 accum.push({
                     type: 'copy',
@@ -181,7 +185,7 @@ function installPluginMods(api) {
 
         if (variantSet.size > 1) {
             const variantModHandling = await api.showDialog('error', 'Variant mod detected', {
-                bbcode: t('The author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.[br][/br][br][/br]'
+                bbcode: api.translate('The author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.[br][/br][br][/br]'
                     + `Variant mods are not supported by the game extension, and the mod author will need to repackage their mod.`),
                 options: { order: ['bbcode'], wrap: true },
             }, [
@@ -201,19 +205,98 @@ function installPluginMods(api) {
     }
 }
 
+function testSupportedMoreProductsContent(files, gameId) {
+
+    const supported = (gameId) === GAME_ID && (files.findIndex(file => file.toLowerCase().includes('products.json')) !== -1)
+
+    return Promise.resolve({
+        supported,
+        requiredFiles: [],
+    });
+}
+
+function installMoreProductsMods(api) {
+    return async (files, workingDir, gameId, progressDel, choices, unattended, archivePath) => {
+        let destination = MOREPRODUCTS_RELPATH;
+        const variantSet = new Set();
+
+        const instructions = files.reduce((accum, iter) => {
+            const ext = path.extname(path.basename(iter));
+            if (!ext) {
+                // This is a folder, leave it alone.
+                return accum;
+            }
+            const segments = iter.split(path.sep);
+            const lowerSegments = segments.map((seg) => seg.toLowerCase());
+
+            const pluginsIdx = lowerSegments.indexOf('plugins');
+            const moreProductsIdx = lowerSegments.indexOf('moreproducts');
+            const bepinexVariantIdx = segments.map((seg) => seg.toLowerCase()).indexOf('bepinex');
+            const moreProductsVariantIdx = segments.map((seg) => seg.toLowerCase()).indexOf('moreproducts');
+
+            //Variant mod detection
+            if (moreProductsVariantIdx !== -1)
+                variantSet.add(segments.slice(0, moreProductsVariantIdx).join(path.sep));
+            else if (bepinexVariantIdx !== -1)
+                variantSet.add(segments.slice(0, bepinexVariantIdx).join(path.sep));
+
+            let relPath;
+
+            if (moreProductsIdx !== -1) {
+                relPath = segments.slice(moreProductsIdx + 1).join(path.sep);
+            } else if (pluginsIdx !== -1) {
+                relPath = path.join('moreproducts', segments.slice(pluginsIdx + 1).join(path.sep));
+            } else {
+                relPath = segments.join(path.sep);
+            }
+
+            const fullDest = path.join(destination, relPath);
+
+            accum.push({
+                type: 'copy',
+                source: iter,
+                destination: fullDest,
+            });
+
+            return accum;
+        }, []);
+
+        if (variantSet.size > 1) {
+            const variantModHandling = await api.showDialog('error', 'Variant mod detected', {
+                bbcode: api.translate('The author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.[br][/br][br][/br]'
+                    + `Variant mods are not supported by the game extension, and the mod author will need to repackage their mod.`),
+            }, [
+                { label: 'Ok' },
+                { label: 'Ignore' },
+            ]);
+
+            if (variantModHandling.action === 'Ok') {
+                throw new util.UserCanceled();
+            }
+
+            api.sendNotification({
+                type: 'warning',
+                message: 'Variant mod detected.\n\nThe author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.\n\nThe installed mod may not work as expected.',
+            });
+        }
+
+        return Promise.resolve({ instructions });
+    }
+}
+
 function testSupportedTextureReplacerContent(files, gameId) {
     const lowerCaseFiles = files.map(file => file.toLowerCase());
 
-    const hasSupportedFile = (ext) => lowerCaseFiles.some(file => path.extname(file) === ext);
-    const hasSupportedName = (name) => lowerCaseFiles.some(file => file === name.toLowerCase());
+    const hasSupportedFileExt = (ext) => lowerCaseFiles.some(file => path.extname(file) === ext);
+    const hasSupportedFolderName = (name) => lowerCaseFiles.some(file => file === name.toLowerCase());
 
     const supported = gameId === GAME_ID && (
         // .txt files can be considered readme files so I'm excluding that
-        hasSupportedFile('.png') ||
-        hasSupportedFile('.obj') ||
-        hasSupportedName('objects_textures') ||
-        hasSupportedName('products_icons') ||
-        hasSupportedName('products_names')
+        hasSupportedFileExt('.png') ||
+        hasSupportedFileExt('.obj') ||
+        hasSupportedFolderName('objects_textures') ||
+        hasSupportedFolderName('products_icons') ||
+        hasSupportedFolderName('products_names')
     );
 
     return Promise.resolve({
@@ -235,11 +318,13 @@ function installTextureReplacerMods(api) {
             }
             const segments = iter.split(path.sep);
             const lowerSegments = segments.map((seg) => seg.toLowerCase());
-            const textureReplacerIdx = lowerSegments.indexOf('texturereplacer');
+            const textureReplacerVariantIdx = segments.map((seg) => seg.toLowerCase()).indexOf('texturereplacer');
+            const bepinexVariantIdx = segments.map((seg) => seg.toLowerCase()).indexOf('bepinex');
 
-            if (textureReplacerIdx !== -1) {
-                variantSet.add(segments.slice(0, textureReplacerIdx).join(path.sep));
-            }
+            if (textureReplacerVariantIdx !== -1)
+                variantSet.add(segments.slice(0, textureReplacerVariantIdx).join(path.sep));
+            else if (bepinexVariantIdx !== -1)
+                variantSet.add(segments.slice(0, bepinexVariantIdx).join(path.sep));
 
             const variantDirs = ['bepinex', 'plugins', 'texturereplacer', 'object_textures', 'products_icons', 'products_names'];
             const variantIdx = lowerSegments.findIndex(seg => variantDirs.includes(seg));
@@ -269,7 +354,7 @@ function installTextureReplacerMods(api) {
 
         if (variantSet.size > 1) {
             const variantModHandling = await api.showDialog('error', 'Variant mod detected', {
-                bbcode: t('The author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.[br][/br][br][/br]'
+                bbcode: api.translate('The author of the mod has packaged the mod files in such a way that users need to specifically choose which variant of the mods to install.[br][/br][br][/br]'
                     + `Variant mods are not supported by the game extension, and the mod author will need to repackage their mod.`),
             }, [
                 { label: 'Ok' },
@@ -294,6 +379,31 @@ async function modloaderRequirement(api, discovery) {
     try {
         await fs.statAsync(path.join(discovery.path, BEPINEX_RELPATH, 'patchers/tobey/Tobey.BepInExMelonLoaderWizard.dll')); // Check if file exists
     } catch (err) {
+
+        //Todo
+        /* 
+        api.sendNotification({
+            id: 'supermarketsimulator-bepinmelonpacknotinstalled',
+            type: 'warning',
+            message: `Tobey's BepInEx x MelonLoader Pack not deployed`,
+            allowSuppress: true,
+            actions: [
+                {
+                    title: 'More',
+                    action: dismiss => {
+                        api.showDialog('warning', `Tobey's BepInEx x MelonLoader Pack not deployed`, {
+                            bbcode: api.translate(`Vortex has detected that Tobey's BepInEx x MelonLoader Pack is installed but not deployed`
+                                + `Deployment is required to ensure that the mod is working as expected`)
+                        }, [
+                            { label: 'Deploy', action: () => api.suppressNotification('supermarketsimulator-bepinmelonpacknotinstalled') },
+                            { label: 'Close', action: () => api.suppressNotification('supermarketsimulator-bepinmelonpacknotinstalled') }
+                        ]);
+                    },
+                },
+            ],
+        });
+    */
+
         const modFiles = await api.ext.nexusGetModFiles(GAME_ID, BEPINMELON_MOD_ID);
 
         const fileTime = (input) => Number.parseInt(input.uploaded_time, 10);
