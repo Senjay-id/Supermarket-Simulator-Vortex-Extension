@@ -3,6 +3,7 @@ const { fs, log, selectors, util, actions } = require('vortex-api');
 
 const STEAMAPP_ID = '2670630';
 const GAME_ID = 'supermarketsimulator';
+const userProfile = path.join(process.env.USERPROFILE, 'AppData', 'LocalLow', 'Nokta Games', 'Supermarket Simulator');
 const BEPINMELON_MOD_ID = 9;
 const BEPINEX_RELPATH = 'bepinex';
 const BEPINEX_PATCHERS_RELPATH = path.join(BEPINEX_RELPATH, 'patchers');
@@ -36,6 +37,29 @@ function main(context) {
             steamAppId: STEAMAPP_ID,
         },
     });
+
+    context.registerAction('mod-icons', 2424, 'changelog', {}, 'Open Save Folder',
+        () => { util.opn(userProfile) },
+        () => {
+            //Only show the action for SMS.
+            const state = context.api.store.getState();
+            const gameMode = selectors.activeGameId(state);
+            return (gameMode === GAME_ID);
+        });
+
+    context.registerAction('mod-icons', 2425, 'import', {}, 'Open Log Folder',
+        () => {
+            const state = context.api.getState();
+            const discovery = selectors.discoveryByGame(state, GAME_ID);
+            util.opn(path.join(discovery.path, 'bepinex'))
+        },
+        () => {
+            //Only show the action for SMS. 
+            const state = context.api.store.getState();
+            const gameMode = selectors.activeGameId(state);
+            return (gameMode === GAME_ID);
+        });
+
 
     //Test for plugin mods then moreproducts mods then texturereplacer mods.
     context.registerInstaller('supermarketsimulator-bepinmelonmod', 15, testSupportedPluginContent, installPluginMods(context.api));
@@ -463,6 +487,8 @@ async function prepareForModding(api, discovery) {
         return Promise.reject(err);
     }
 }
+
+
 
 module.exports = {
     default: main,
