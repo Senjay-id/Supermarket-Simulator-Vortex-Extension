@@ -90,15 +90,31 @@ function installPluginMods(api) {
         const variantSet = new Set();
 
         // Read the content of the DLL file to determine the mod type
-        const dllPlugin = files.find(file => path.extname(file).toLowerCase() === '.dll');
-        if (dllPlugin) {
-            const content = fs.readFileSync(path.join(workingDir, dllPlugin), 'utf8');
-            if (content.includes('BepInEx')) {
-                isBepInEx = true;
-                isBepInExPatcher = !content.includes('BaseUnityPlugin');
-            } else if (content.includes('MelonLoader')) {
-                isMelonLoader = true;
-                isMelonLoaderPlugins = content.includes('MelonPlugin');
+        files.forEach(file => {
+            if (path.extname(file).toLowerCase() === '.dll') {
+                const content = fs.readFileSync(path.join(workingDir, file), 'utf8');
+
+                if (content.includes('BepInEx')) {
+                    isBepInEx = true;
+                    isBepInExPatcher = !content.includes('BaseUnityPlugin');
+                } else if (content.includes('MelonLoader')) {
+                    isMelonLoader = true;
+                    isMelonLoaderPlugins = content.includes('MelonPlugin');
+                }
+            }
+        });
+
+        if (isBepInEx && isMelonLoader) {
+            const mixedModHandling = await api.showDialog('error', 'Mixed mod detected', {
+                bbcode: t('Vortex has detected that the mod package has bepinex and melonloader mod on the archive.[br][/br][br][/br]'
+                    + `Mixed mods are not support by the game extension and the mod author will need to repackage their mod.`),
+                //message: description,
+                options: { order: ['bbcode'], wrap: true },
+            }, [
+                { label: 'Ok' }
+            ]);
+            if (mixedModHandling.action === 'Ok') {
+                throw new util.UserCanceled();
             }
         }
 
@@ -136,6 +152,8 @@ function installPluginMods(api) {
             const segments = iter.split(path.sep);
             const bepinexIdx = segments.map(seg => seg.toLowerCase()).indexOf('bepinex');
             const bepinexConfigIdx = segments.map(seg => seg.toLowerCase()).indexOf('config');
+            const bepinexPluginsIdx = segments.map(seg => seg.toLowerCase()).indexOf('plugins');
+            const bepinexPatchersIdx = segments.map(seg => seg.toLowerCase()).indexOf('patchers');
             const melonloaderIdx = segments.map(seg => seg.toLowerCase()).indexOf('mlloader');
             const melonloaderConfigIdx = segments.map(seg => seg.toLowerCase()).indexOf('userdata');
 
@@ -145,6 +163,20 @@ function installPluginMods(api) {
                     type: 'copy',
                     source: iter,
                     destination: path.join(destination, segments.slice(bepinexIdx).join(path.sep)),
+                });
+            } else if (bepinexPluginsIdx !== -1) {
+                const relPath = path.join(BEPINEX_PLUGINS_RELPATH, segments.slice(bepinexPluginsIdx + 1).join(path.sep));
+                accum.push({
+                    type: 'copy',
+                    source: iter,
+                    destination: path.join(destination, relPath),
+                });
+            } else if (bepinexPatchersIdx !== -1) {
+                const relPath = path.join(BEPINEX_PATCHERS_RELPATH, segments.slice(bepinexPatchersIdx + 1).join(path.sep));
+                accum.push({
+                    type: 'copy',
+                    source: iter,
+                    destination: path.join(destination, relPath),
                 });
             } else if (bepinexConfigIdx !== -1) {
                 const relPath = path.join(BEPINEX_CONFIG_RELPATH, segments.slice(bepinexConfigIdx + 1).join(path.sep));
@@ -177,8 +209,8 @@ function installPluginMods(api) {
                         : path.join(BEPINEX_PLUGINS_RELPATH, dllSegments.slice(-2).join(path.sep));
                 } else if (isMelonLoader) {
                     relPath = isMelonLoaderPlugins
-                        ? path.join(MELONLOADER_PLUGINS_RELPATH, dllSegments.slice(-2).join(path.sep))
-                        : path.join(MELONLOADER_MODS_RELPATH, dllSegments.slice(-2).join(path.sep));
+                        ? path.join(MELONLOADER_PLUGINS_RELPATH, path.basename(iter)) //hardcoded to mlloader/plugins
+                        : path.join(MELONLOADER_MODS_RELPATH, path.basename(iter));   //hardcoded to mlloader/mods
                 }
 
                 accum.push({
@@ -187,7 +219,22 @@ function installPluginMods(api) {
                     destination: path.join(destination, relPath),
                 });
             } else if (!ext) {
-                // Handle files without extensions
+                // Handle asset files without extensions
+                let otherRelPath = '';
+                const otherSegments = iter.split(path.sep);
+
+                if (isMelonLoader) {
+                    otherRelPath = path.join(MELONLOADER_MODS_RELPATH, otherSegments.slice(1).join(path.sep));
+                }
+                else if (isBepInEx)
+                    otherRelPath = path.join(BEPINEX_PLUGINS_RELPATH, otherSegments.slice(1).join(path.sep));
+
+                accum.push({
+                    type: 'copy',
+                    source: iter,
+                    destination: path.join(destination, otherRelPath),
+                });
+            } else { //Handle other asset files
                 let otherRelPath = '';
                 const otherSegments = iter.split(path.sep);
 
